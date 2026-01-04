@@ -2,7 +2,7 @@ English | [中文](README.zh.md)
 
 # Dagor
 
-`Dagor` is a high-performance DAG (Directed Acyclic Graph) operator execution framework designed for high-concurrency online services. It decouples complex business logic into independent operators, enabling flexible orchestration via DAGs with automated parallel scheduling and data injection.
+Dagor is a high-performance DAG (Directed Acyclic Graph) operator execution framework designed for high-concurrency online services. It decouples complex business logic into independent operators, enabling flexible orchestration via DAGs with automated parallel scheduling and data injection.
 
 It is ideal for industrial-grade scenarios such as search engines, recommendation systems, advertising platforms, and real-time feature engineering.
 
@@ -22,6 +22,9 @@ It is ideal for industrial-grade scenarios such as search engines, recommendatio
 * **Edge**: Represents a dependency between vertices, corresponding to an output data field (variable) from one vertex.
 * **Graph**: A DAG composed of multiple vertices and edges, representing a complete business workflow.
 * **Engine**: The runtime container for the Graph. It handles goroutine scheduling, state management, and variable injection.
+
+Relationship between **Graph**、**Vertex** and **Operator**:
+![dag](/docs/images/dag.png)
 
 ## 📦 Installation
 
@@ -138,7 +141,7 @@ Prepare a JSON configuration to define the topology.
 }
 ```
 
-Visualize the dag:s
+Visualize the dag:
 
 ![math demo](/docs/images/demo.png)
 
@@ -215,7 +218,7 @@ func main() {
 
 Implementing every method of the `IOperator` interface can be repetitive. `daggen` automates this process.
 
-1. **Add directives to your operator file:**
+1.**Add directives to your operator file:**
 
 ```go
 //go:generate daggen -type=AddOp -output=add_op_gen.go
@@ -223,7 +226,7 @@ Implementing every method of the `IOperator` interface can be repetitive. `dagge
 //go:generate daggen -type=LogOp -output=log_op_gen.go
 ```
 
-1. **Run generation:**
+2.**Run generation:**
 
 ```bash
 go generate ./...
