@@ -31,7 +31,7 @@ go get github.com/wwz16/dagor
 
 ## 🚀 Quick Start
 
-Below is a minimalist mathematical calculation example. For the full example, see [examples/math/](https://www.google.com/search?q=/examples/math/).
+Below is a minimalist mathematical calculation example. For the full example, see [examples/math/](/examples/math/).
 
 ### 1. Define an Operator
 
