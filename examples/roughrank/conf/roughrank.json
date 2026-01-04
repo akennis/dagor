@@ -1,0 +1,60 @@
+{
+  "name": "roughrank_demo",
+  "vertices": {
+    "init": {
+      "op": "InitOp",
+      "params": {
+        "user_id": 12343245345,
+        "stream_ids": [
+          345345345,
+          345345346,
+          345345347,
+          345345348,
+          345345349
+        ]
+      },
+      "outputs": {
+        "userId": "user_id",
+        "streamIds": "stream_ids"
+      }
+    },
+    "get_user_emb": {
+      "op": "GetUserEmbOp",
+      "inputs": {
+        "userId": "user_id"
+      },
+      "outputs": {
+        "userEmb": "user_emb"
+      }
+    },
+    "get_stream_embs": {
+      "op": "GetStreamEmbsOp",
+      "inputs": {
+        "streamIds": "stream_ids"
+      },
+      "outputs": {
+        "streamEmbs": "stream_embs"
+      }
+    },
+    "calc_sim": {
+      "op": "CalcSimOp",
+      "inputs": {
+        "userEmb": "user_emb",
+        "streamEmbs": "stream_embs"
+      },
+      "outputs": {
+        "scores": "scores"
+      }
+    },
+    "resp": {
+      "op": "RespOp",
+      "inputs": {
+        "userId": "user_id",
+        "scores": "scores"
+      },
+      "outputs": {
+        "resp": "response"
+      }
+    }
+  }
+}

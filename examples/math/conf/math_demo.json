@@ -1,0 +1,45 @@
+{
+    "name": "math_demo",
+    "vertices": {
+        "const10": {
+            "op": "ConstOp",
+            "params": {
+                "in": 10
+            },
+            "outputs": {
+                "out": "n1"
+            }
+        },
+        "const20": {
+            "op": "ConstOp",
+            "params": {
+                "in": 20
+            },
+            "outputs": {
+                "out": "n2"
+            }
+        },
+        "add": {
+            "op": "AddOp",
+            "inputs": {
+                "a": "n1",
+                "b": "n2"
+            },
+            "outputs": {
+                "sum": "n3"
+            }
+        },
+        "log": {
+            "op": "LogOp",
+            "params": {
+                "base": 10
+            },
+            "inputs": {
+                "x": "n3"
+            },
+            "outputs": {
+                "result": "answer"
+            }
+        }
+    }
+}
