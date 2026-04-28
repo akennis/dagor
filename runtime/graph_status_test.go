@@ -165,6 +165,50 @@ func TestSetError_MultipleCalls(t *testing.T) {
 	}
 }
 
+func TestSetError_Concurrent(t *testing.T) {
+	const goroutines = 200
+	for range 10 { // repeat to increase race window coverage
+		status := NewGraphStatus()
+
+		errs := make([]error, goroutines)
+		for i := range errs {
+			errs[i] = errors.New("concurrent error")
+		}
+
+		var wg sync.WaitGroup
+		wg.Add(goroutines)
+		for i := 0; i < goroutines; i++ {
+			i := i
+			go func() {
+				defer wg.Done()
+				status.SetError(errs[i])
+			}()
+		}
+		wg.Wait()
+
+		got := status.Error()
+		if got == nil {
+			t.Fatal("expected a non-nil error after concurrent SetError calls")
+		}
+		found := false
+		for _, e := range errs {
+			if got == e {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("stored error %v is not one of the submitted errors", got)
+		}
+
+		select {
+		case <-status.Done():
+		default:
+			t.Error("done channel should be closed after SetError")
+		}
+	}
+}
+
 func TestError_NoError(t *testing.T) {
 	status := NewGraphStatus()
 

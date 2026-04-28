@@ -73,19 +73,94 @@ func (g *Graph) initFromConfig(config *config.GraphConfig) error {
 			}
 			g.fieldVertex[vertexField] = vertex
 		}
+		// map vertices advertise their output wire via MapConfig.ResultsWire, not Outputs.
+		if vertex.Map != nil && vertex.Map.ResultsWire != "" {
+			if _, ok := g.fieldVertex[vertex.Map.ResultsWire]; ok {
+				return fmt.Errorf("field %s already exists", vertex.Map.ResultsWire)
+			}
+			g.fieldVertex[vertex.Map.ResultsWire] = vertex
+		}
+		// filter vertices advertise their output wire via FilterConfig.ResultsWire, not Outputs.
+		if vertex.Filter != nil && vertex.Filter.ResultsWire != "" {
+			if _, ok := g.fieldVertex[vertex.Filter.ResultsWire]; ok {
+				return fmt.Errorf("field %s already exists", vertex.Filter.ResultsWire)
+			}
+			g.fieldVertex[vertex.Filter.ResultsWire] = vertex
+		}
+		// reduce vertices advertise their output wire via ReduceConfig.ResultsWire, not Outputs.
+		if vertex.Reduce != nil && vertex.Reduce.ResultsWire != "" {
+			if _, ok := g.fieldVertex[vertex.Reduce.ResultsWire]; ok {
+				return fmt.Errorf("field %s already exists", vertex.Reduce.ResultsWire)
+			}
+			g.fieldVertex[vertex.Reduce.ResultsWire] = vertex
+		}
+	}
+
+	// ExternalWires are wires with no producer vertex in this graph; their
+	// values are injected by the caller (e.g. a parent map node) before Run.
+	// Skip edge creation for them — consumers will be start vertices and will
+	// read the pre-seeded FieldValue from the engine status.
+	externalWires := make(map[string]struct{}, len(config.ExternalWires))
+	for _, w := range config.ExternalWires {
+		externalWires[w] = struct{}{}
 	}
 
 	// create edges
 	for name, vertex := range g.vertices {
 		for _, input := range vertex.Inputs {
+			if _, isExternal := externalWires[input]; isExternal {
+				continue // no producer vertex; value is injected before Run
+			}
 			predecessor, ok := g.fieldVertex[input]
 			if !ok {
 				return fmt.Errorf("predecessor vertex %s not found", input)
 			}
-
-			// update vertex edges
 			vertex.predecessors[predecessor.name] = predecessor
 			predecessor.successors[name] = vertex
+		}
+
+		// condition inputs create DAG edges so the predicate wire is always
+		// resolved before this vertex is evaluated, but are not fed to the op.
+		for _, wire := range vertex.ConditionInputs {
+			if _, isExternal := externalWires[wire]; isExternal {
+				continue
+			}
+			predecessor, ok := g.fieldVertex[wire]
+			if !ok {
+				return fmt.Errorf("condition input wire %s not found for vertex %s", wire, name)
+			}
+			vertex.predecessors[predecessor.name] = predecessor
+			predecessor.successors[name] = vertex
+		}
+
+		// reduce InitWire creates a DAG edge so the producer runs before the
+		// reduce vertex reads the initial accumulator value.
+		if vertex.Reduce != nil && vertex.Reduce.InitWire != "" {
+			if _, isExternal := externalWires[vertex.Reduce.InitWire]; !isExternal {
+				predecessor, ok := g.fieldVertex[vertex.Reduce.InitWire]
+				if !ok {
+					return fmt.Errorf("init wire %s not found for vertex %s", vertex.Reduce.InitWire, name)
+				}
+				if _, already := vertex.predecessors[predecessor.name]; !already {
+					vertex.predecessors[predecessor.name] = predecessor
+					predecessor.successors[name] = vertex
+				}
+			}
+		}
+
+		// passthrough wire sources also need to be resolved before skip evaluation.
+		for _, sourceWire := range vertex.PassthroughWires {
+			if _, isExternal := externalWires[sourceWire]; isExternal {
+				continue
+			}
+			predecessor, ok := g.fieldVertex[sourceWire]
+			if !ok {
+				return fmt.Errorf("passthrough wire %s not found for vertex %s", sourceWire, name)
+			}
+			if _, already := vertex.predecessors[predecessor.name]; !already {
+				vertex.predecessors[predecessor.name] = predecessor
+				predecessor.successors[name] = vertex
+			}
 		}
 	}
 
@@ -153,4 +228,10 @@ func (g *Graph) VertexByName(name string) *Vertex {
 // Size returns the size of the graph.
 func (g *Graph) Size() int {
 	return len(g.vertices)
+}
+
+// FieldProducer returns the vertex that produces the given field name.
+func (g *Graph) FieldProducer(fieldName string) (*Vertex, bool) {
+	v, ok := g.fieldVertex[fieldName]
+	return v, ok
 }

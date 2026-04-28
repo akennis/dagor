@@ -49,24 +49,17 @@ func TestOperatorPool_Put(t *testing.T) {
 		return newMockOperator("test")
 	})
 
-	// Get an operator
 	op1 := pool.Get()
 	if op1 == nil {
 		t.Fatal("expected non-nil operator")
 	}
 
-	// Put it back
 	pool.Put(op1)
 
-	// Get again - should reuse the same instance
+	// Get after Put must return a valid operator (sync.Pool may or may not reuse the same instance).
 	op2 := pool.Get()
 	if op2 == nil {
-		t.Fatal("expected non-nil operator")
-	}
-
-	// Should be the same instance (reused from pool)
-	if op1 != op2 {
-		t.Error("expected same operator instance after Put/Get")
+		t.Fatal("expected non-nil operator after Put/Get")
 	}
 }
 
@@ -75,7 +68,6 @@ func TestOperatorPool_GetPutCycle(t *testing.T) {
 		return newMockOperator("test")
 	})
 
-	// Test multiple Get/Put cycles
 	ops := make([]IOperator, 5)
 	for i := 0; i < 5; i++ {
 		ops[i] = pool.Get()
@@ -84,27 +76,16 @@ func TestOperatorPool_GetPutCycle(t *testing.T) {
 		}
 	}
 
-	// Put all back
 	for i := 0; i < 5; i++ {
 		pool.Put(ops[i])
 	}
 
-	// Get them back - should reuse instances
+	// Each Get after Put must return a valid operator.
+	// sync.Pool does not guarantee pointer identity, so we only check non-nil.
 	for i := 0; i < 5; i++ {
 		op := pool.Get()
 		if op == nil {
-			t.Fatalf("expected non-nil operator at index %d", i)
-		}
-		// Check if it's one of the original instances
-		found := false
-		for j := 0; j < 5; j++ {
-			if op == ops[j] {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Errorf("operator at index %d was not reused from pool", i)
+			t.Fatalf("expected non-nil operator at index %d after Put/Get cycle", i)
 		}
 	}
 }

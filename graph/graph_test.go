@@ -438,6 +438,196 @@ func TestHasCycle_SingleVertex(t *testing.T) {
 	}
 }
 
+func TestNewGraphFromJson_NestedMapOver(t *testing.T) {
+	raw := []byte(`{
+		"name": "nested_map_json",
+		"vertices": {
+			"source": {
+				"op": "SourceOp",
+				"inputs": {},
+				"outputs": {"Items": "outer_list"}
+			},
+			"outer_map": {
+				"inputs": {"Items": "outer_list"},
+				"map": {
+					"item_input":    "outer_item",
+					"result_output": "inner_results",
+					"results_wire":  "outer_results",
+					"subgraph": {
+						"external_wires": ["outer_item"],
+						"vertices": {
+							"inner_map": {
+								"inputs": {"Items": "outer_item"},
+								"map": {
+									"item_input":    "inner_item",
+									"result_output": "inner_result",
+									"results_wire":  "inner_results",
+									"subgraph": {
+										"external_wires": ["inner_item"],
+										"vertices": {
+											"double": {
+												"op":      "DoubleOp",
+												"inputs":  {"In": "inner_item"},
+												"outputs": {"Out": "inner_result"}
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}`)
+
+	g, err := NewGraphFromJson(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	outerMap := g.VertexByName("outer_map")
+	if outerMap == nil {
+		t.Fatal("vertex 'outer_map' not found")
+	}
+	if outerMap.Map == nil {
+		t.Fatal("outer_map: expected Map config")
+	}
+	if outerMap.Map.ItemInput != "outer_item" {
+		t.Errorf("outer_map: ItemInput = %q, want %q", outerMap.Map.ItemInput, "outer_item")
+	}
+	if outerMap.Map.ResultOutput != "inner_results" {
+		t.Errorf("outer_map: ResultOutput = %q, want %q", outerMap.Map.ResultOutput, "inner_results")
+	}
+	if outerMap.Map.ResultsWire != "outer_results" {
+		t.Errorf("outer_map: ResultsWire = %q, want %q", outerMap.Map.ResultsWire, "outer_results")
+	}
+	// Verify the fieldVertex map knows about the results wire so downstream vertices can connect.
+	producer, ok := g.FieldProducer("outer_results")
+	if !ok {
+		t.Error("outer_results wire not registered in graph fieldVertex")
+	} else if producer.Name() != "outer_map" {
+		t.Errorf("outer_results produced by %q, want %q", producer.Name(), "outer_map")
+	}
+
+	innerMapCfg, ok := outerMap.Map.Subgraph.Vertices["inner_map"]
+	if !ok {
+		t.Fatal("outer sub-graph: vertex 'inner_map' not found")
+	}
+	if innerMapCfg.Map == nil {
+		t.Fatal("inner_map: expected Map config")
+	}
+	if innerMapCfg.Map.ItemInput != "inner_item" {
+		t.Errorf("inner_map: ItemInput = %q, want %q", innerMapCfg.Map.ItemInput, "inner_item")
+	}
+	if innerMapCfg.Map.ResultOutput != "inner_result" {
+		t.Errorf("inner_map: ResultOutput = %q, want %q", innerMapCfg.Map.ResultOutput, "inner_result")
+	}
+	if innerMapCfg.Map.ResultsWire != "inner_results" {
+		t.Errorf("inner_map: ResultsWire = %q, want %q", innerMapCfg.Map.ResultsWire, "inner_results")
+	}
+
+	doubleCfg, ok := innerMapCfg.Map.Subgraph.Vertices["double"]
+	if !ok {
+		t.Fatal("inner sub-graph: vertex 'double' not found")
+	}
+	if doubleCfg.Op != "DoubleOp" {
+		t.Errorf("double: Op = %q, want %q", doubleCfg.Op, "DoubleOp")
+	}
+}
+
+// TestNewGraphFromJson_MapVertex_OldOutputsFormat verifies that a JSON config
+// that uses the pre-BUG-02 format ("outputs":{"Results":...} without results_wire)
+// now returns a clear validation error rather than silently misrouting the wire.
+func TestNewGraphFromJson_MapVertex_OldOutputsFormat(t *testing.T) {
+	raw := []byte(`{
+		"name": "old_format",
+		"vertices": {
+			"source": {
+				"op": "SourceOp",
+				"inputs": {},
+				"outputs": {"Items": "list_wire"}
+			},
+			"map_v": {
+				"inputs":  {"Items": "list_wire"},
+				"outputs": {"Results": "results_wire"},
+				"map": {
+					"item_input":    "item",
+					"result_output": "item_out",
+					"subgraph": {
+						"external_wires": ["item"],
+						"vertices": {}
+					}
+				}
+			}
+		}
+	}`)
+
+	_, err := NewGraphFromJson(raw)
+	if err == nil {
+		t.Fatal("expected error for map vertex with Outputs[\"Results\"] but no results_wire, got nil")
+	}
+}
+
+func TestNewGraphFromConfig_ExternalWire_AsConditionInput(t *testing.T) {
+	// A sub-graph vertex uses an external wire as a ConditionInput.
+	// Before fix: construction failed with "condition input wire … not found".
+	cfg := &config.GraphConfig{
+		Name:          "sub_graph",
+		ExternalWires: []string{"flag_wire"},
+		Vertices: map[string]*config.VertexConfig{
+			"v1": {
+				Op:              "some_op",
+				Params:          json.RawMessage(`{}`),
+				Inputs:          map[string]string{},
+				Outputs:         map[string]string{"out": "result"},
+				Condition:       "some_predicate",
+				ConditionInputs: []string{"flag_wire"},
+			},
+		},
+	}
+
+	g, err := NewGraphFromConfig(cfg)
+	if err != nil {
+		t.Fatalf("expected no error for external wire as condition input, got: %v", err)
+	}
+	// v1 has no DAG predecessors because its only condition input is external.
+	v1 := g.VertexByName("v1")
+	if len(v1.Predecessors()) != 0 {
+		t.Errorf("expected 0 predecessors, got %d", len(v1.Predecessors()))
+	}
+}
+
+func TestNewGraphFromConfig_ExternalWire_AsPassthroughWire(t *testing.T) {
+	// A sub-graph vertex uses an external wire as a PassthroughWire source.
+	// Before fix: construction failed with "passthrough wire … not found".
+	cfg := &config.GraphConfig{
+		Name:          "sub_graph",
+		ExternalWires: []string{"src_wire"},
+		Vertices: map[string]*config.VertexConfig{
+			"v1": {
+				Op:      "some_op",
+				Params:  json.RawMessage(`{}`),
+				Inputs:  map[string]string{},
+				Outputs: map[string]string{"out": "result"},
+				PassthroughWires: map[string]string{
+					"out": "src_wire",
+				},
+			},
+		},
+	}
+
+	g, err := NewGraphFromConfig(cfg)
+	if err != nil {
+		t.Fatalf("expected no error for external wire as passthrough source, got: %v", err)
+	}
+	// v1 has no DAG predecessors because its only passthrough source is external.
+	v1 := g.VertexByName("v1")
+	if len(v1.Predecessors()) != 0 {
+		t.Errorf("expected 0 predecessors, got %d", len(v1.Predecessors()))
+	}
+}
+
 func TestHasCycle_DisconnectedVertices(t *testing.T) {
 	cfg := &config.GraphConfig{
 		Name: "test_graph",

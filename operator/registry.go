@@ -55,6 +55,14 @@ func (f *OperatorRegistry) Put(name string, op IOperator) error {
 	return nil
 }
 
+// RegisterOpFactory registers an operator under an explicit name using a caller-
+// supplied factory function. Use this instead of RegisterOp when the type name
+// derived by reflection is unsuitable — for example when registering a specific
+// instantiation of a generic type such as CoalesceOp[string].
+func RegisterOpFactory(name string, factory func() IOperator) error {
+	return operatorRegistry.Register(name, factory)
+}
+
 // RegisterOp registers a new operator.
 // It should be called in init function of the operator package.
 func RegisterOp[T any]() error {

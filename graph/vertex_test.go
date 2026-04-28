@@ -2,6 +2,7 @@ package graph
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/wwz16/dagor/config"
@@ -387,6 +388,281 @@ func TestNewVertex_WhitespaceName(t *testing.T) {
 	}
 	if vertex.Name() != "   " {
 		t.Errorf("expected name '   ', got '%s'", vertex.Name())
+	}
+}
+
+func TestNewVertex_MapVertex_ValidSingleInputOutput(t *testing.T) {
+	vconfig := &config.VertexConfig{
+		Inputs:  map[string]string{"slice_field": "slice_wire"},
+		Outputs: map[string]string{},
+		Map: &config.MapConfig{
+			ItemInput:    "item_in",
+			ResultOutput: "item_out",
+			ResultsWire:  "results_wire",
+			Subgraph:     &config.GraphConfig{},
+		},
+	}
+	vertex, err := NewVertex("map_v", vconfig)
+	if err != nil {
+		t.Errorf("unexpected error for valid map vertex: %v", err)
+	}
+	if vertex == nil {
+		t.Fatal("expected non-nil vertex")
+	}
+}
+
+func TestNewVertex_MapVertex_ZeroInputs(t *testing.T) {
+	vconfig := &config.VertexConfig{
+		Inputs:  map[string]string{},
+		Outputs: map[string]string{},
+		Map: &config.MapConfig{
+			ItemInput:    "item_in",
+			ResultOutput: "item_out",
+			ResultsWire:  "results_wire",
+			Subgraph:     &config.GraphConfig{},
+		},
+	}
+	_, err := NewVertex("map_v", vconfig)
+	if err == nil {
+		t.Error("expected error for map vertex with zero inputs, got nil")
+	}
+}
+
+func TestNewVertex_MapVertex_TwoInputs(t *testing.T) {
+	vconfig := &config.VertexConfig{
+		Inputs: map[string]string{
+			"field_a": "wire_a",
+			"field_b": "wire_b",
+		},
+		Outputs: map[string]string{},
+		Map: &config.MapConfig{
+			ItemInput:    "item_in",
+			ResultOutput: "item_out",
+			ResultsWire:  "results_wire",
+			Subgraph:     &config.GraphConfig{},
+		},
+	}
+	_, err := NewVertex("map_v", vconfig)
+	if err == nil {
+		t.Error("expected error for map vertex with two inputs, got nil")
+	}
+}
+
+func TestNewVertex_MapVertex_EmptyResultsWire(t *testing.T) {
+	vconfig := &config.VertexConfig{
+		Inputs:  map[string]string{"slice_field": "slice_wire"},
+		Outputs: map[string]string{},
+		Map: &config.MapConfig{
+			ItemInput:    "item_in",
+			ResultOutput: "item_out",
+			ResultsWire:  "", // missing — must error
+			Subgraph:     &config.GraphConfig{},
+		},
+	}
+	_, err := NewVertex("map_v", vconfig)
+	if err == nil {
+		t.Error("expected error for map vertex with empty ResultsWire, got nil")
+	}
+}
+
+func TestNewVertex_DoesNotMutateCallerConfig(t *testing.T) {
+	// BUG-05: NewVertex must not write back to the caller's *VertexConfig.
+	// If it did, concurrent calls sharing the same config would race.
+	cases := []struct {
+		name    string
+		onError string
+	}{
+		{"empty defaults to stop without mutating", ""},
+		{"invalid defaults to stop without mutating", "bogus"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			original := tc.onError
+			vconfig := &config.VertexConfig{
+				Op:      "test_op",
+				Params:  json.RawMessage(`{}`),
+				Inputs:  make(map[string]string),
+				Outputs: make(map[string]string),
+				OnError: original,
+			}
+			vertex, err := NewVertex("v1", vconfig)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if vertex.OnError != config.OnErrorStop {
+				t.Errorf("vertex.OnError: want %q, got %q", config.OnErrorStop, vertex.OnError)
+			}
+			if vconfig.OnError != original {
+				t.Errorf("caller config mutated: want %q, got %q", original, vconfig.OnError)
+			}
+		})
+	}
+}
+
+func TestNewVertex_BothOpAndMap_Error(t *testing.T) {
+	vconfig := &config.VertexConfig{
+		Op:     "some_op",
+		Params: json.RawMessage(`{}`),
+		Inputs: map[string]string{"slice_field": "slice_wire"},
+		Map: &config.MapConfig{
+			ItemInput:    "item_in",
+			ResultOutput: "item_out",
+			ResultsWire:  "results_wire",
+			Subgraph:     &config.GraphConfig{},
+		},
+	}
+	_, err := NewVertex("v", vconfig)
+	if err == nil {
+		t.Fatal("expected error when both Op and Map are set, got nil")
+	}
+	if !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Errorf("expected 'mutually exclusive' in error, got: %v", err)
+	}
+}
+
+func TestNewVertex_NeitherOpNorMap_Error(t *testing.T) {
+	vconfig := &config.VertexConfig{
+		Params:  json.RawMessage(`{}`),
+		Inputs:  make(map[string]string),
+		Outputs: make(map[string]string),
+	}
+	_, err := NewVertex("v", vconfig)
+	if err == nil {
+		t.Fatal("expected error when neither Op nor Map is set, got nil")
+	}
+	if !strings.Contains(err.Error(), "one of Op, Map, Filter, or Reduce must be set") {
+		t.Errorf("expected 'one of Op, Map, Filter, or Reduce must be set' in error, got: %v", err)
+	}
+}
+
+func TestNewVertex_FilterVertex_Valid(t *testing.T) {
+	vconfig := &config.VertexConfig{
+		Inputs:  map[string]string{"slice_field": "slice_wire"},
+		Outputs: map[string]string{},
+		Filter: &config.FilterConfig{
+			Predicate:   "positive",
+			ResultsWire: "filtered_wire",
+		},
+	}
+	vertex, err := NewVertex("filter_v", vconfig)
+	if err != nil {
+		t.Errorf("unexpected error for valid filter vertex: %v", err)
+	}
+	if vertex == nil {
+		t.Fatal("expected non-nil vertex")
+	}
+	if vertex.Filter == nil {
+		t.Fatal("expected non-nil Filter on vertex")
+	}
+	if vertex.Filter.Predicate != "positive" {
+		t.Errorf("expected Predicate 'positive', got %q", vertex.Filter.Predicate)
+	}
+	if vertex.Filter.ResultsWire != "filtered_wire" {
+		t.Errorf("expected ResultsWire 'filtered_wire', got %q", vertex.Filter.ResultsWire)
+	}
+}
+
+func TestNewVertex_FilterVertex_ZeroInputs(t *testing.T) {
+	vconfig := &config.VertexConfig{
+		Inputs:  map[string]string{},
+		Outputs: map[string]string{},
+		Filter: &config.FilterConfig{
+			Predicate:   "positive",
+			ResultsWire: "filtered_wire",
+		},
+	}
+	_, err := NewVertex("filter_v", vconfig)
+	if err == nil {
+		t.Error("expected error for filter vertex with zero inputs, got nil")
+	}
+}
+
+func TestNewVertex_FilterVertex_TwoInputs(t *testing.T) {
+	vconfig := &config.VertexConfig{
+		Inputs: map[string]string{
+			"field_a": "wire_a",
+			"field_b": "wire_b",
+		},
+		Outputs: map[string]string{},
+		Filter: &config.FilterConfig{
+			Predicate:   "positive",
+			ResultsWire: "filtered_wire",
+		},
+	}
+	_, err := NewVertex("filter_v", vconfig)
+	if err == nil {
+		t.Error("expected error for filter vertex with two inputs, got nil")
+	}
+}
+
+func TestNewVertex_FilterVertex_EmptyPredicate(t *testing.T) {
+	vconfig := &config.VertexConfig{
+		Inputs:  map[string]string{"slice_field": "slice_wire"},
+		Outputs: map[string]string{},
+		Filter: &config.FilterConfig{
+			Predicate:   "",
+			ResultsWire: "filtered_wire",
+		},
+	}
+	_, err := NewVertex("filter_v", vconfig)
+	if err == nil {
+		t.Error("expected error for filter vertex with empty Predicate, got nil")
+	}
+}
+
+func TestNewVertex_FilterVertex_EmptyResultsWire(t *testing.T) {
+	vconfig := &config.VertexConfig{
+		Inputs:  map[string]string{"slice_field": "slice_wire"},
+		Outputs: map[string]string{},
+		Filter: &config.FilterConfig{
+			Predicate:   "positive",
+			ResultsWire: "",
+		},
+	}
+	_, err := NewVertex("filter_v", vconfig)
+	if err == nil {
+		t.Error("expected error for filter vertex with empty ResultsWire, got nil")
+	}
+}
+
+func TestNewVertex_FilterAndOp_MutuallyExclusive(t *testing.T) {
+	vconfig := &config.VertexConfig{
+		Op:     "some_op",
+		Inputs: map[string]string{"slice_field": "slice_wire"},
+		Filter: &config.FilterConfig{
+			Predicate:   "positive",
+			ResultsWire: "filtered_wire",
+		},
+	}
+	_, err := NewVertex("filter_v", vconfig)
+	if err == nil {
+		t.Fatal("expected error when both Op and Filter are set, got nil")
+	}
+	if !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Errorf("expected 'mutually exclusive' in error, got: %v", err)
+	}
+}
+
+func TestNewVertex_FilterAndMap_MutuallyExclusive(t *testing.T) {
+	vconfig := &config.VertexConfig{
+		Inputs: map[string]string{"slice_field": "slice_wire"},
+		Filter: &config.FilterConfig{
+			Predicate:   "positive",
+			ResultsWire: "filtered_wire",
+		},
+		Map: &config.MapConfig{
+			ItemInput:    "item_in",
+			ResultOutput: "item_out",
+			ResultsWire:  "results_wire",
+			Subgraph:     &config.GraphConfig{},
+		},
+	}
+	_, err := NewVertex("v", vconfig)
+	if err == nil {
+		t.Fatal("expected error when both Filter and Map are set, got nil")
+	}
+	if !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Errorf("expected 'mutually exclusive' in error, got: %v", err)
 	}
 }
 

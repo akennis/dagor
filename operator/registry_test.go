@@ -147,15 +147,14 @@ func TestOperatorRegistry_GetPutCycle(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Get again - should reuse the same instance
+	// Get after Put must return a valid operator.
+	// sync.Pool does not guarantee pointer identity, so we only check non-nil.
 	op2, err := registry.Get("test_op")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-
-	// Should be the same instance (reused from pool)
-	if op1 != op2 {
-		t.Error("expected same operator instance after Put/Get")
+	if op2 == nil {
+		t.Error("expected non-nil operator after Put/Get")
 	}
 }
 

@@ -2,5 +2,9 @@
 .vscode/
 vendor/
 .DS_Store
+.claude/
 
 engine
+*.exe
+examples/**/main
+examples/**/*.exe

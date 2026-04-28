@@ -12,7 +12,9 @@ It is ideal for industrial-grade scenarios such as search engines, recommendatio
 * **Zero-Code Injection**: Automated mapping of input/output fields and seamless data transmission between operators.
 * **Configuration-Driven**: Define complex business workflows via JSON, achieving complete decoupling of business topology from code logic.
 * **Extreme Performance**: Features a goroutine pool for asynchronous scheduling, operator pooling, and topology optimization to maximize parallelism and minimize GC pressure.
-* **Developer-Friendly API**: Clean JSON syntax and out-of-the-box APIs allow developers to focus purely on core business logic.
+* **Conditional Branching**: Skip vertices at runtime via named predicates, with transitive propagation and coalesce merge for mutually-exclusive branches.
+* **Map Nodes**: Fan out a sub-graph over a dynamically-produced slice, processing every element concurrently and collecting results — no list required at graph-build time.
+* **Developer-Friendly API**: Clean JSON syntax and a fluent builder API allow developers to focus purely on core business logic.
 * **Code Generation**: Automated generation of operator code to reduce manual development effort.
 
 ## 🧩 Core Concepts
@@ -214,6 +216,247 @@ func main() {
 
 ## 🛠 Advanced Features
 
+### Conditional Vertices
+
+A vertex can be made conditional by setting the `condition` field to the name of a registered **predicate**. If the predicate returns `false` at runtime the vertex (and all vertices that depend solely on its outputs) is skipped.
+
+**1. Register a predicate** – predicates receive the current graph's output map and return a boolean.
+
+```go
+import "github.com/wwz16/dagor/predicate"
+
+predicate.Register("positive", func(inputs map[string]any) bool {
+    ptr, ok := inputs["source_out"].(*int)
+    if !ok || ptr == nil {
+        return false
+    }
+    return *ptr > 0
+})
+```
+
+**2. Reference it in the vertex config:**
+
+```json
+{
+  "filter": {
+    "op": "FilterOp",
+    "condition": "positive",
+    "inputs":  { "in": "source_out" },
+    "outputs": { "out": "filter_out" }
+  }
+}
+```
+
+Or in Go config:
+
+```go
+"filter": {
+    Op:        "FilterOp",
+    Condition: "positive",
+    Inputs:    map[string]string{"in": "source_out"},
+    Outputs:   map[string]string{"out": "filter_out"},
+},
+```
+
+**3. Check whether a vertex was skipped after `eng.Run`:**
+
+```go
+if eng.VertexSkipped("filter") {
+    log.Println("filter was skipped")
+}
+```
+
+See the full example in [examples/conditional/](/examples/conditional/).
+
+---
+
+### Coalescing Mutually-Exclusive Branches
+
+When two branches are guarded by complementary predicates (exactly one always runs), use a **coalesce vertex** to merge their outputs into a single value. Without `merge: "coalesce"` the engine would propagate the skip from the branch that did not run and refuse to execute the output node.
+
+```
+source ──► det_branch  (condition=positive)     ──► coalesce (merge=coalesce)
+       └─► ai_branch   (condition=not_positive) ──►
+```
+
+**Config (JSON):**
+
+```json
+{
+  "coalesce": {
+    "op":     "CoalesceIntOp",
+    "merge":  "coalesce",
+    "inputs":  { "A": "det_out", "B": "ai_out" },
+    "outputs": { "Result": "coalesced_out" }
+  }
+}
+```
+
+**Config (Go):**
+
+```go
+"coalesce": {
+    Op:      "CoalesceIntOp",
+    Merge:   config.MergeCoalesce,
+    Inputs:  map[string]string{"A": "det_out", "B": "ai_out"},
+    Outputs: map[string]string{"Result": "coalesced_out"},
+},
+```
+
+Import the built-in operators package to make the coalesce operators available:
+
+```go
+import _ "github.com/wwz16/dagor/operator/builtin"
+```
+
+**Built-in coalesce operators (2-input):**
+
+| Operator name       | Type      |
+|---------------------|-----------|
+| `CoalesceStringOp`  | `string`  |
+| `CoalesceIntOp`     | `int`     |
+| `CoalesceFloat64Op` | `float64` |
+| `CoalesceBoolOp`    | `bool`    |
+
+**N-input variants** (configure arity via `params.n`):
+
+| Operator name        | Type      |
+|----------------------|-----------|
+| `CoalesceNStringOp`  | `string`  |
+| `CoalesceNIntOp`     | `int`     |
+| `CoalesceNFloat64Op` | `float64` |
+| `CoalesceNBoolOp`    | `bool`    |
+
+```json
+{
+  "coalesce": {
+    "op":     "CoalesceNIntOp",
+    "merge":  "coalesce",
+    "params": { "n": 3 },
+    "inputs":  { "Input0": "branch0_out", "Input1": "branch1_out", "Input2": "branch2_out" },
+    "outputs": { "Result": "final_out" }
+  }
+}
+```
+
+`CoalesceOp` returns the first non-nil input in declaration order (`A` before `B`, `Input0` before `Input1`, …). It errors if every branch was skipped (all inputs are nil).
+
+---
+
+### Map Nodes
+
+A **map node** fans out execution of a sub-graph over every element of a slice input concurrently, then collects the per-element results into a `[]any` output wire. This is the idiomatic way to apply a multi-step pipeline to a list that materialises as the output of an earlier node.
+
+```
+source ──► [map node] ──► []any results
+               │
+               └─ sub-graph (runs once per element, in parallel)
+                     step1 ──► step2 ──► … ──► result wire
+```
+
+#### How it works
+
+1. The map node reads a slice from its single input wire.
+2. Each element is wrapped in a pointer (`*T`) and injected as the **item wire** inside the sub-graph, consistent with dagor's pointer-based wire convention.
+3. One sub-graph execution is submitted to the goroutine pool per element; all run concurrently.
+4. The value of the **result wire** from each execution is dereferenced and appended to a `[]any` output slice.
+5. Downstream vertices receive `[]any` and type-assert to the expected concrete type.
+
+#### Sub-graph operator convention
+
+Sub-graph operators that consume the item wire declare their input as `*T` and type-assert in `SetInputField`:
+
+```go
+type DoubleOp struct {
+    In  *int `dag:"input"`
+    Out int  `dag:"output"`
+}
+
+func (op *DoubleOp) SetInputField(field string, value any) error {
+    if field == "In" {
+        v, ok := value.(*int)
+        if !ok {
+            return fmt.Errorf("expected *int, got %T", value)
+        }
+        op.In = v
+    }
+    return nil
+}
+```
+
+#### JSON configuration
+
+```json
+{
+  "source": {
+    "op": "SourceOp",
+    "params": { "values": [1, 2, 3, 4, 5] },
+    "outputs": { "Items": "raw_items" }
+  },
+  "double_all": {
+    "inputs":  { "Items": "raw_items" },
+    "outputs": { "Results": "doubled_items" },
+    "map": {
+      "item_input":    "item",
+      "result_output": "result",
+      "subgraph": {
+        "external_wires": ["item"],
+        "vertices": {
+          "double": {
+            "op":      "DoubleOp",
+            "inputs":  { "In": "item" },
+            "outputs": { "Out": "result" }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+**Key fields:**
+
+| Field | Description |
+|---|---|
+| `map.item_input` | Wire name inside the sub-graph that receives each element (`*T`). |
+| `map.result_output` | Wire name inside the sub-graph whose value is collected per element. |
+| `map.subgraph.external_wires` | Must list the item wire — tells the sub-graph it has no producer vertex for this wire. |
+
+#### Fluent Builder API
+
+```go
+g, err := graph.NewBuilder("map_demo").
+    Vertex("source").
+        Op("SourceOp").
+        Params(map[string]any{"values": []int{1, 2, 3, 4, 5}}).
+        Output("Items", "raw_items").
+    Vertex("double_all").
+        Input("Items", "raw_items").
+        MapOver("item").                  // declares the item wire name
+            SubVertex("double").
+                Op("DoubleOp").
+                Input("In", "item").
+                Output("Out", "result").
+            CollectInto("result", "doubled_items"). // result wire → output wire
+    Build()
+```
+
+`MapOver(itemInput)` returns a `MapConfigBuilder`. Chain `SubVertex` calls to define the sub-graph, then terminate with `CollectInto(resultOutput, outputWire)` which returns to the parent `VertexBuilder` so the fluent chain continues normally.
+
+#### Reading the output
+
+```go
+out, _ := eng.GetOutput("doubled_items")
+results := out.([]any)
+for _, v := range results {
+    fmt.Println(v.(int)) // type-assert to the concrete element type
+}
+```
+
+See the full example in [examples/map/](/examples/map/).
+
+---
+
 ### Automated Code Generation
 
 Implementing every method of the `IOperator` interface can be repetitive. `daggen` automates this process.
@@ -230,6 +473,43 @@ Implementing every method of the `IOperator` interface can be repetitive. `dagge
 
 ```bash
 go generate ./...
+```
+
+### Fluent Builder API
+
+As an alternative to JSON configuration, you can use the fluent builder API provided by the `graph` package to construct DAGs programmatically. This is particularly useful for dynamic graph construction or when you prefer type safety.
+
+```go
+import (
+    "github.com/wwz16/dagor/graph"
+)
+
+func buildGraph() (*graph.Graph, error) {
+    return graph.NewBuilder("math_demo").
+        Vertex("const10").
+            Op("ConstOp").
+            Params(map[string]int{"in": 10}).
+            Output("out", "n1").
+        Done().
+        Vertex("const20").
+            Op("ConstOp").
+            Params(map[string]int{"in": 20}).
+            Output("out", "n2").
+        Done().
+        Vertex("add").
+            Op("AddOp").
+            Input("a", "n1").
+            Input("b", "n2").
+            Output("sum", "n3").
+        Done().
+        Vertex("log").
+            Op("LogOp").
+            Params(map[string]int{"base": 10}).
+            Input("x", "n3").
+            Output("result", "answer").
+        Done().
+        Build()
+}
 ```
 
 ### Dynamic Parameter Parsings

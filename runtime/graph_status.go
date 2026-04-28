@@ -51,16 +51,20 @@ type GraphStatus struct {
 
 	// vertex errors map. vertex -> error.
 	vertexErrors sync.Map
+
+	// skipped vertices map. vertex -> struct{}.
+	skippedVertices sync.Map
 }
 
 func NewGraphStatus() *GraphStatus {
 	return &GraphStatus{
-		ops:          make(map[string]operator.IOperator),
-		fieldValues:  make(map[string]*FieldValue),
-		inDegrees:    make(map[*graph.Vertex]*int32),
-		vertexErrors: sync.Map{},
-		done:         make(chan struct{}),
-		state:        int32(GraphStateInit),
+		ops:             make(map[string]operator.IOperator),
+		fieldValues:     make(map[string]*FieldValue),
+		inDegrees:       make(map[*graph.Vertex]*int32),
+		vertexErrors:    sync.Map{},
+		skippedVertices: sync.Map{},
+		done:            make(chan struct{}),
+		state:           int32(GraphStateInit),
 	}
 }
 
@@ -78,16 +82,9 @@ func (s *GraphStatus) SetError(err error) {
 	if err == nil {
 		return
 	}
-	// Use CompareAndSwap to ensure only first error is stored.
-	if s.err.Load() != nil {
-		return
+	if s.err.CompareAndSwap(nil, err) {
+		s.NotifyDone()
 	}
-
-	// store error.
-	s.err.Store(err)
-
-	// notify done chan to notify graph execution finished.
-	s.NotifyDone()
 }
 
 func (s *GraphStatus) Error() error {
@@ -105,6 +102,17 @@ func (s *GraphStatus) VertexError(v *graph.Vertex) error {
 		return nil
 	}
 	return err.(error)
+}
+
+// SetVertexSkipped marks a vertex as skipped. Thread-safe.
+func (s *GraphStatus) SetVertexSkipped(v *graph.Vertex) {
+	s.skippedVertices.Store(v, struct{}{})
+}
+
+// IsVertexSkipped returns true if the vertex was skipped. Thread-safe.
+func (s *GraphStatus) IsVertexSkipped(v *graph.Vertex) bool {
+	_, ok := s.skippedVertices.Load(v)
+	return ok
 }
 
 // SetVertexError sets the error for a vertex. Thread-safe.
