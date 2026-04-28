@@ -7,6 +7,7 @@ import (
 	"time"
 
 	_ "github.com/wwz16/dagor/examples/math/op"
+	_ "github.com/wwz16/dagor/operator/builtin"
 
 	"github.com/panjf2000/ants/v2"
 	"github.com/wwz16/dagor"

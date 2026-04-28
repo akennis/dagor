@@ -2,21 +2,21 @@
     "name": "math_demo",
     "vertices": {
         "const10": {
-            "op": "ConstOp",
+            "op": "ConstIntOp",
             "params": {
-                "in": 10
+                "Value": "10"
             },
             "outputs": {
-                "out": "n1"
+                "Result": "n1"
             }
         },
         "const20": {
-            "op": "ConstOp",
+            "op": "ConstIntOp",
             "params": {
-                "in": 20
+                "Value": "20"
             },
             "outputs": {
-                "out": "n2"
+                "Result": "n2"
             }
         },
         "add": {
