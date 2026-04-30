@@ -15,6 +15,7 @@ It is ideal for industrial-grade scenarios such as search engines, recommendatio
 * **Conditional Branching**: Skip vertices at runtime via named predicates, with transitive propagation and coalesce merge for mutually-exclusive branches.
 * **Map Nodes**: Fan out a sub-graph over a dynamically-produced slice, processing every element concurrently and collecting results — no list required at graph-build time.
 * **Developer-Friendly API**: Clean JSON syntax and a fluent builder API allow developers to focus purely on core business logic.
+* **Pluggable Observability**: A `Reporter` interface with per-run UUID correlation lets programs plug in any logging or metrics backend. A `SlogReporter` backed by `log/slog` is included out of the box.
 * **Code Generation**: Automated generation of operator code to reduce manual development effort.
 
 ## 🧩 Core Concepts
@@ -454,6 +455,136 @@ for _, v := range results {
 ```
 
 See the full example in [examples/map/](/examples/map/).
+
+---
+
+### Logging and Metrics
+
+Every `Engine.Run` call is automatically assigned a random UUID **run ID** and injected into the context. This makes it possible to group all log lines from a single workflow execution even when a log file contains interleaved output from concurrent runs.
+
+Observability is pluggable: implement the `Reporter` interface and pass it at engine creation time. The library ships a ready-to-use `SlogReporter` backed by the standard `log/slog` package.
+
+#### Reporter interface
+
+```go
+type Reporter interface {
+    OnGraphStart(ctx context.Context, name string)
+    OnGraphFinish(ctx context.Context, name string, dur time.Duration, err error)
+    OnVertexStart(ctx context.Context, graphName, vertexName, vertexType string)
+    OnVertexFinish(ctx context.Context, graphName, vertexName, vertexType string, dur time.Duration, err error)
+    OnVertexSkipped(ctx context.Context, graphName, vertexName, vertexType string, reason SkipReason)
+    OnVertexFields(ctx context.Context, graphName, vertexName string, phase FieldPhase, fields map[string]any)
+}
+```
+
+All methods receive the context carrying the run ID. `OnVertexStart` fires for every vertex (including those that will be skipped). `OnVertexFinish` fires only when a vertex actually executed; `OnVertexSkipped` fires instead when it was skipped. `OnVertexFields` fires for `op` vertices only — once with operator inputs (before `Run`) and once with outputs (after a successful `Run`).
+
+**Skip reasons** (`SkipReason`):
+
+| Value | Meaning |
+|---|---|
+| `SkipReasonCondition` | The vertex's own condition predicate returned false |
+| `SkipReasonTransitive` | A predecessor vertex was skipped |
+| `SkipReasonError` | The vertex errored with `on_error: continue` |
+
+**Field phases** (`FieldPhase`): `FieldPhaseInput`, `FieldPhaseOutput`.
+
+#### Built-in SlogReporter
+
+```go
+import (
+    "log/slog"
+    "os"
+
+    "github.com/wwz16/dagor"
+    "github.com/wwz16/dagor/reporter"
+)
+
+logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+    Level: slog.LevelDebug,
+}))
+
+eng, err := dagor.NewEngine(g, pool,
+    dagor.WithReporter(reporter.New(logger)),
+)
+```
+
+Every emitted line includes `run_id`, `graph`, and event-specific attributes:
+
+```
+level=INFO  msg=graph.start   run_id=fbb7bb0a-... graph=math_demo
+level=DEBUG msg=vertex.start  run_id=fbb7bb0a-... graph=math_demo vertex=add type=op
+level=DEBUG msg=vertex.fields run_id=fbb7bb0a-... graph=math_demo vertex=add phase=input a=10 b=20
+level=DEBUG msg=vertex.fields run_id=fbb7bb0a-... graph=math_demo vertex=add phase=output sum=30
+level=DEBUG msg=vertex.finish run_id=fbb7bb0a-... graph=math_demo vertex=add type=op dur_ms=1
+level=INFO  msg=graph.finish  run_id=fbb7bb0a-... graph=math_demo dur_ms=4
+```
+
+On error the level is `ERROR` and an `err=` attribute is included.
+
+#### Scrubbing sensitive field values
+
+Pass a `FieldScrubber` to control which field values reach the reporter. Return `nil` to omit a field entirely:
+
+```go
+scrubber := dagor.FieldScrubber(func(
+    ctx context.Context,
+    graphName, vertexName, fieldName string,
+    phase dagor.FieldPhase,
+    value any,
+) any {
+    if fieldName == "password" || fieldName == "token" {
+        return nil // omit from report
+    }
+    return value
+})
+
+eng, err := dagor.NewEngine(g, pool,
+    dagor.WithReporter(reporter.New(logger)),
+    dagor.WithFieldScrubber(scrubber),
+)
+```
+
+The scrubber receives the fully-dereferenced runtime value (not the raw pointer stored on the wire) along with enough context to make field-level decisions.
+
+#### Accessing the run ID in custom code
+
+`dagor.RunID(ctx)` returns the run ID from any context that passed through `Engine.Run` — useful in operator implementations or custom `Reporter` methods:
+
+```go
+func (op *MyOp) Run(ctx context.Context) error {
+    log.Printf("run_id=%s processing item", dagor.RunID(ctx))
+    // ...
+}
+```
+
+#### Custom Reporter
+
+Implement `dagor.Reporter` directly to send events to any backend (Prometheus, OpenTelemetry, Datadog, etc.):
+
+```go
+type myReporter struct{}
+
+func (r *myReporter) OnGraphFinish(_ context.Context, name string, dur time.Duration, err error) {
+    graphDurationHistogram.WithLabelValues(name).Observe(dur.Seconds())
+    if err != nil {
+        graphErrorCounter.WithLabelValues(name).Inc()
+    }
+}
+// ... implement remaining methods (or embed dagor.NoopReporter for no-ops)
+```
+
+Embed `dagor.NoopReporter` to avoid implementing unused methods:
+
+```go
+type myReporter struct {
+    dagor.NoopReporter // no-op for all unimplemented methods
+}
+
+func (r *myReporter) OnGraphFinish(ctx context.Context, name string, dur time.Duration, err error) {
+    // only this method has custom behaviour
+}
+```
 
 ---
 

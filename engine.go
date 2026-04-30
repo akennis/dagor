@@ -2,10 +2,13 @@ package dagor
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"reflect"
+	"time"
 
 	"github.com/wwz16/dagor/config"
 	"github.com/wwz16/dagor/graph"
@@ -27,16 +30,33 @@ type defaultOpPool struct{}
 func (defaultOpPool) getOp(name string) (operator.IOperator, error)  { return operator.GetOp(name) }
 func (defaultOpPool) putOp(name string, op operator.IOperator) error { return operator.PutOp(name, op) }
 
+type engineConfig struct {
+	reporter Reporter
+	scrubber FieldScrubber
+}
+
+// Option configures an Engine at creation time.
+type Option func(*engineConfig)
+
+// WithReporter sets the Reporter that receives lifecycle events during Run.
+func WithReporter(r Reporter) Option { return func(c *engineConfig) { c.reporter = r } }
+
+// WithFieldScrubber sets a FieldScrubber that is applied to every operator input and output
+// value before it is forwarded to the Reporter. Return nil from the scrubber to omit a field.
+func WithFieldScrubber(s FieldScrubber) Option { return func(c *engineConfig) { c.scrubber = s } }
+
 // Engine is the engine for running the graph.
 type Engine struct {
-	graph  *graph.Graph
-	pool   runtime.IGPool
-	opPool opPooler
-	status *runtime.GraphStatus
+	graph    *graph.Graph
+	pool     runtime.IGPool
+	opPool   opPooler
+	status   *runtime.GraphStatus
+	reporter Reporter     // never nil; defaults to NoopReporter{}
+	scrubber FieldScrubber // nil means pass all fields through unchanged
 }
 
 // NewEngine creates a new engine.
-func NewEngine(graph *graph.Graph, pool runtime.IGPool) (*Engine, error) {
+func NewEngine(graph *graph.Graph, pool runtime.IGPool, opts ...Option) (*Engine, error) {
 	// check params
 	if graph == nil {
 		return nil, fmt.Errorf("graph is required")
@@ -45,16 +65,61 @@ func NewEngine(graph *graph.Graph, pool runtime.IGPool) (*Engine, error) {
 		return nil, fmt.Errorf("pool is required")
 	}
 
+	cfg := engineConfig{reporter: NoopReporter{}}
+	for _, o := range opts {
+		o(&cfg)
+	}
+
 	return &Engine{
-		graph:  graph,
-		pool:   pool,
-		opPool: defaultOpPool{},
-		status: runtime.NewGraphStatus(),
+		graph:    graph,
+		pool:     pool,
+		opPool:   defaultOpPool{},
+		status:   runtime.NewGraphStatus(),
+		reporter: cfg.reporter,
+		scrubber: cfg.scrubber,
 	}, nil
 }
 
+// runIDKey is the unexported context key for the workflow run ID.
+type runIDKey struct{}
+
+// RunID returns the workflow run ID stored in ctx by the engine.
+// Returns an empty string if ctx was not produced by Engine.Run.
+// Custom Reporter implementations and operators can call this to correlate
+// their own log lines with the engine's observability events.
+func RunID(ctx context.Context) string {
+	id, _ := ctx.Value(runIDKey{}).(string)
+	return id
+}
+
+func withRunID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, runIDKey{}, id)
+}
+
+// newRunID generates a random UUID v4.
+func newRunID() string {
+	var b [16]byte
+	if _, err := io.ReadFull(rand.Reader, b[:]); err != nil {
+		panic("dagor: failed to generate run ID: " + err.Error())
+	}
+	b[6] = (b[6] & 0x0f) | 0x40 // version 4
+	b[8] = (b[8] & 0x3f) | 0x80 // variant bits
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
+		b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
+
 // Run runs the graph.
-func (e *Engine) Run(ctx context.Context) error {
+func (e *Engine) Run(ctx context.Context) (err error) {
+	// Assign a unique ID to this run and propagate it through all reporter calls
+	// and operator executions so that log lines from concurrent runs can be grouped.
+	runCtx := withRunID(ctx, newRunID())
+
+	graphStart := time.Now()
+	e.reporter.OnGraphStart(runCtx, e.graph.Name())
+	defer func() {
+		e.reporter.OnGraphFinish(runCtx, e.graph.Name(), time.Since(graphStart), err)
+	}()
+
 	// check if graph is empty.
 	if e.graph.Size() == 0 {
 		return nil
@@ -62,7 +127,7 @@ func (e *Engine) Run(ctx context.Context) error {
 
 	// init engine.
 	// setup operators and bind output fields.
-	if err := e.init(); err != nil {
+	if err = e.init(); err != nil {
 		return err
 	}
 
@@ -72,13 +137,14 @@ func (e *Engine) Run(ctx context.Context) error {
 	for _, v := range startVertices {
 		// submit op execution task to pool.
 		e.status.AddWaitGroup(1)
-		err := e.pool.Submit(func() {
+		submitErr := e.pool.Submit(func() {
 			defer e.status.DoneWaitGroup()
-			e.runVertex(ctx, v)
+			e.runVertex(runCtx, v)
 		})
-		if err != nil {
+		if submitErr != nil {
 			e.status.DoneWaitGroup()
-			e.status.SetError(err)
+			e.status.SetError(submitErr)
+			err = submitErr
 			return err
 		}
 	}
@@ -95,7 +161,8 @@ func (e *Engine) Run(ctx context.Context) error {
 
 	// set graph state to finished.
 	e.status.SetState(runtime.GraphStateFinished)
-	return e.status.Error()
+	err = e.status.Error()
+	return err
 }
 
 // init initializes the engine.
@@ -215,12 +282,17 @@ func (e *Engine) runVertex(ctx context.Context, v *graph.Vertex) error {
 		return fmt.Errorf("graph has execution error: %v", err)
 	}
 
+	vertexStart := time.Now()
+	vType := vertexTypeName(v)
+	e.reporter.OnVertexStart(ctx, e.graph.Name(), v.Name(), vType)
+
 	// check if this vertex should be skipped.
 	skip, err := e.shouldSkip(v)
 	if err != nil {
 		e.status.SetVertexError(v, err)
 		if v.OnError == config.OnErrorStop {
 			e.status.SetError(err)
+			e.reporter.OnVertexFinish(ctx, e.graph.Name(), v.Name(), vType, time.Since(vertexStart), err)
 			return err
 		}
 		skip = true // on_error=continue: skip to avoid propagating bad data
@@ -242,6 +314,11 @@ func (e *Engine) runVertex(ctx context.Context, v *graph.Vertex) error {
 				fv.Value = nil
 			}
 		}
+		if err != nil {
+			e.reporter.OnVertexSkipped(ctx, e.graph.Name(), v.Name(), vType, SkipReasonError)
+		} else {
+			e.reporter.OnVertexSkipped(ctx, e.graph.Name(), v.Name(), vType, e.classifySkipReason(v))
+		}
 		return e.scheduleNextVertices(ctx, v)
 	}
 
@@ -260,6 +337,7 @@ func (e *Engine) runVertex(ctx context.Context, v *graph.Vertex) error {
 		e.status.SetVertexError(v, execErr)
 		if v.OnError == config.OnErrorStop {
 			e.status.SetError(execErr)
+			e.reporter.OnVertexFinish(ctx, e.graph.Name(), v.Name(), vType, time.Since(vertexStart), execErr)
 			return execErr
 		}
 		// OnErrorContinue: mirror the skip path so successors see consistent nil
@@ -281,7 +359,11 @@ func (e *Engine) runVertex(ctx context.Context, v *graph.Vertex) error {
 				fv.Value = nil
 			}
 		}
+		e.reporter.OnVertexSkipped(ctx, e.graph.Name(), v.Name(), vType, SkipReasonError)
+		return e.scheduleNextVertices(ctx, v)
 	}
+
+	e.reporter.OnVertexFinish(ctx, e.graph.Name(), v.Name(), vType, time.Since(vertexStart), nil)
 
 	// schedule next vertices execution.
 	return e.scheduleNextVertices(ctx, v)
@@ -322,8 +404,21 @@ func (e *Engine) runOp(ctx context.Context, v *graph.Vertex) (err error) {
 		}
 	}
 
+	// report input fields after all SetInputField calls, before execution.
+	if inputs := e.scrubFields(ctx, e.graph.Name(), v.Name(), FieldPhaseInput, op.InputFields()); len(inputs) > 0 {
+		e.reporter.OnVertexFields(ctx, e.graph.Name(), v.Name(), FieldPhaseInput, inputs)
+	}
+
 	// execute operator.
-	return op.Run(ctx)
+	err = op.Run(ctx)
+
+	// report output fields on success.
+	if err == nil {
+		if outputs := e.scrubFields(ctx, e.graph.Name(), v.Name(), FieldPhaseOutput, op.OutputFields()); len(outputs) > 0 {
+			e.reporter.OnVertexFields(ctx, e.graph.Name(), v.Name(), FieldPhaseOutput, outputs)
+		}
+	}
+	return
 }
 
 func (e *Engine) scheduleNextVertices(ctx context.Context, v *graph.Vertex) error {
@@ -411,6 +506,73 @@ func (e *Engine) Close(ctx context.Context) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// vertexTypeName returns a short string label for the vertex's execution type.
+func vertexTypeName(v *graph.Vertex) string {
+	switch {
+	case v.Map != nil:
+		return "map"
+	case v.Filter != nil:
+		return "filter"
+	case v.Reduce != nil:
+		return "reduce"
+	default:
+		return "op"
+	}
+}
+
+// scrubFields builds a shallow copy of rawFields with all pointer levels dereferenced,
+// then optionally passes each value through the configured FieldScrubber.
+// Fields for which the scrubber returns nil are omitted from the result.
+func (e *Engine) scrubFields(ctx context.Context, graphName, vertexName string,
+	phase FieldPhase, rawFields map[string]any) map[string]any {
+	result := make(map[string]any, len(rawFields))
+	for k, ptr := range rawFields {
+		val := dereferenceAll(ptr)
+		if e.scrubber != nil {
+			val = e.scrubber(ctx, graphName, vertexName, k, phase, val)
+		}
+		if val != nil {
+			result[k] = val
+		}
+	}
+	return result
+}
+
+// dereferenceAll follows pointer chains until reaching a non-pointer value or a nil pointer.
+// InputFields() returns **T values; OutputFields() returns *T values; this handles both uniformly.
+func dereferenceAll(v any) any {
+	rv := reflect.ValueOf(v)
+	for rv.Kind() == reflect.Ptr {
+		if rv.IsNil() {
+			return nil
+		}
+		rv = rv.Elem()
+	}
+	return rv.Interface()
+}
+
+// classifySkipReason determines whether a transitive or condition skip occurred.
+// It is called after shouldSkip returns (true, nil) to distinguish between
+// "a predecessor was skipped" and "this vertex's own condition returned false".
+func (e *Engine) classifySkipReason(v *graph.Vertex) SkipReason {
+	for _, wireName := range v.Inputs {
+		if producer, ok := e.graph.FieldProducer(wireName); ok && e.status.IsVertexSkipped(producer) {
+			return SkipReasonTransitive
+		}
+	}
+	for _, wireName := range v.ConditionInputs {
+		if producer, ok := e.graph.FieldProducer(wireName); ok && e.status.IsVertexSkipped(producer) {
+			return SkipReasonTransitive
+		}
+	}
+	if v.Reduce != nil && v.Reduce.InitWire != "" {
+		if producer, ok := e.graph.FieldProducer(v.Reduce.InitWire); ok && e.status.IsVertexSkipped(producer) {
+			return SkipReasonTransitive
+		}
+	}
+	return SkipReasonCondition
 }
 
 // shouldSkip returns true if the vertex should be skipped.

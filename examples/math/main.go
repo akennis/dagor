@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"log/slog"
 	"os"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/panjf2000/ants/v2"
 	"github.com/wwz16/dagor"
 	"github.com/wwz16/dagor/graph"
+	"github.com/wwz16/dagor/reporter"
 )
 
 func main() {
@@ -44,8 +46,25 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 
+	// Set up structured logging at DEBUG level so all vertex events are visible.
+	slogLogger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	// FieldScrubber: demonstrate how to redact sensitive fields.
+	// Fields named "secret" are omitted; all others pass through unchanged.
+	scrubber := dagor.FieldScrubber(func(_ context.Context,
+		_, _, fieldName string, _ dagor.FieldPhase, value any,
+	) any {
+		if fieldName == "secret" {
+			return nil
+		}
+		return value
+	})
+
 	// Create engine instance
-	eng, err := dagor.NewEngine(g, p)
+	eng, err := dagor.NewEngine(g, p,
+		dagor.WithReporter(reporter.New(slogLogger)),
+		dagor.WithFieldScrubber(scrubber),
+	)
 	if err != nil {
 		log.Printf("NewEngine error %v\n", err)
 		return
