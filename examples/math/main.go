@@ -7,8 +7,7 @@ import (
 	"os"
 	"time"
 
-	_ "github.com/wwz16/dagor/examples/math/op"
-	_ "github.com/wwz16/dagor/operator/builtin"
+	"github.com/wwz16/dagor/examples/math/op"
 
 	"github.com/panjf2000/ants/v2"
 	"github.com/wwz16/dagor"
@@ -41,10 +40,13 @@ func main() {
 		return
 	}
 
-	// 3. Run engine
-	// Init context.
+	// 3. Run engine.
+	// Operands are injected via context; the same compiled graph can be reused
+	// across calls with different values by passing a fresh context each time.
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
+	ctx = context.WithValue(ctx, op.MathAKey, 10)
+	ctx = context.WithValue(ctx, op.MathBKey, 20)
 
 	// Set up structured logging at DEBUG level so all vertex events are visible.
 	slogLogger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
@@ -60,7 +62,7 @@ func main() {
 		return value
 	})
 
-	// Create engine instance
+	// Create engine instance.
 	eng, err := dagor.NewEngine(g, p,
 		dagor.WithReporter(reporter.New(slogLogger)),
 		dagor.WithFieldScrubber(scrubber),

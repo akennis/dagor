@@ -1,20 +1,14 @@
 {
     "name": "math_demo",
     "vertices": {
-        "const10": {
-            "op": "ConstIntOp",
-            "params": {
-                "Value": "10"
-            },
+        "input_a": {
+            "op": "MathAOp",
             "outputs": {
                 "Result": "n1"
             }
         },
-        "const20": {
-            "op": "ConstIntOp",
-            "params": {
-                "Value": "20"
-            },
+        "input_b": {
+            "op": "MathBOp",
             "outputs": {
                 "Result": "n2"
             }
