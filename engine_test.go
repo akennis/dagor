@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wwz16/dagor/config"
-	"github.com/wwz16/dagor/graph"
-	"github.com/wwz16/dagor/operator"
-	"github.com/wwz16/dagor/predicate"
-	"github.com/wwz16/dagor/runtime"
+	"github.com/akennis/dagor/config"
+	"github.com/akennis/dagor/graph"
+	"github.com/akennis/dagor/operator"
+	"github.com/akennis/dagor/predicate"
+	"github.com/akennis/dagor/runtime"
 )
 
 // trackingOpPool wraps the real operator pool and tracks outstanding borrows.

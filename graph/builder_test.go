@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wwz16/dagor/config"
+	"github.com/akennis/dagor/config"
 )
 
 func TestBuilder_MultiError(t *testing.T) {

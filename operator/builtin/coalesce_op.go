@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/wwz16/dagor/config"
-	"github.com/wwz16/dagor/operator"
+	"github.com/akennis/dagor/config"
+	"github.com/akennis/dagor/operator"
 )
 
 // ---------------------------------------------------------------------------
@@ -193,7 +193,7 @@ func (op *CoalesceNOp[T]) ResetFields() {
 //
 // Import this package with a blank identifier to make these ops available:
 //
-//	import _ "github.com/wwz16/dagor/operator/builtin"
+//	import _ "github.com/akennis/dagor/operator/builtin"
 
 func init() {
 	type entry struct {

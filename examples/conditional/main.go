@@ -5,14 +5,14 @@ import (
 	"log"
 	"time"
 
-	_ "github.com/wwz16/dagor/examples/conditional/op"
-	_ "github.com/wwz16/dagor/operator/builtin" // CoalesceIntOp
+	_ "github.com/akennis/dagor/examples/conditional/op"
+	_ "github.com/akennis/dagor/operator/builtin" // CoalesceIntOp
 
 	"github.com/panjf2000/ants/v2"
-	"github.com/wwz16/dagor"
-	"github.com/wwz16/dagor/config"
-	"github.com/wwz16/dagor/graph"
-	"github.com/wwz16/dagor/predicate"
+	"github.com/akennis/dagor"
+	"github.com/akennis/dagor/config"
+	"github.com/akennis/dagor/graph"
+	"github.com/akennis/dagor/predicate"
 )
 
 // registerPredicates installs the "positive" and "negative" predicates used by

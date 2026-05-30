@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/wwz16/dagor/config"
+	"github.com/akennis/dagor/config"
 )
 
 func TestNewOperatorRegistry(t *testing.T) {

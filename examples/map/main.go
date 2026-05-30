@@ -5,11 +5,11 @@ import (
 	"log"
 	"time"
 
-	_ "github.com/wwz16/dagor/examples/map/op"
+	_ "github.com/akennis/dagor/examples/map/op"
 
 	"github.com/panjf2000/ants/v2"
-	"github.com/wwz16/dagor"
-	"github.com/wwz16/dagor/graph"
+	"github.com/akennis/dagor"
+	"github.com/akennis/dagor/graph"
 )
 
 // buildMapGraph builds:

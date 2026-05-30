@@ -3,7 +3,7 @@ package operator
 import (
 	"context"
 
-	"github.com/wwz16/dagor/config"
+	"github.com/akennis/dagor/config"
 )
 
 // IOperator is the interface for all operators.

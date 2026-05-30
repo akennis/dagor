@@ -6,8 +6,8 @@ import (
 	"log"
 	"strconv"
 
-	"github.com/wwz16/dagor/config"
-	"github.com/wwz16/dagor/operator"
+	"github.com/akennis/dagor/config"
+	"github.com/akennis/dagor/operator"
 )
 
 // ---------------------------------------------------------------------------
@@ -82,7 +82,7 @@ func (op *ConstOp[T]) ResetFields() {
 //
 // Import this package with a blank identifier to make these ops available:
 //
-//	import _ "github.com/wwz16/dagor/operator/builtin"
+//	import _ "github.com/akennis/dagor/operator/builtin"
 
 func newConstFactory[T any](parse func(string) (T, error)) func() operator.IOperator {
 	return func() operator.IOperator {

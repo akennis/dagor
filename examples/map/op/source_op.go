@@ -4,8 +4,8 @@ import (
 	"context"
 	"log"
 
-	"github.com/wwz16/dagor/config"
-	"github.com/wwz16/dagor/operator"
+	"github.com/akennis/dagor/config"
+	"github.com/akennis/dagor/operator"
 )
 
 // SourceOp produces a fixed slice of integers configured via params.

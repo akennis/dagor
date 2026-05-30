@@ -7,12 +7,12 @@ import (
 	"os"
 	"time"
 
-	"github.com/wwz16/dagor/examples/math/op"
+	"github.com/akennis/dagor/examples/math/op"
 
 	"github.com/panjf2000/ants/v2"
-	"github.com/wwz16/dagor"
-	"github.com/wwz16/dagor/graph"
-	"github.com/wwz16/dagor/reporter"
+	"github.com/akennis/dagor"
+	"github.com/akennis/dagor/graph"
+	"github.com/akennis/dagor/reporter"
 )
 
 func main() {

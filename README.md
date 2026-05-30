@@ -6,6 +6,8 @@ Dagor is a high-performance DAG (Directed Acyclic Graph) operator execution fram
 
 It is ideal for industrial-grade scenarios such as search engines, recommendation systems, advertising platforms, and real-time feature engineering.
 
+> **Note:** This is an independently maintained fork of [wwz16/dagor](https://github.com/wwz16/dagor), originally created by Will Zhang. It is developed and released separately under `github.com/akennis/dagor`. See [License](#-license) for attribution.
+
 ## ✨ Key Highlights
 
 * **Field-Level Dependency**: The framework automatically deduces vertex dependencies; users only need to declare input/output fields.
@@ -32,7 +34,7 @@ Relationship between **Graph**、**Vertex** and **Operator**:
 ## 📦 Installation
 
 ```bash
-go get github.com/wwz16/dagor
+go get github.com/akennis/dagor
 ```
 
 ## 🚀 Quick Start
@@ -49,8 +51,8 @@ import (
     "fmt"
     "log"
 
-    "github.com/wwz16/dagor/config"
-    "github.com/wwz16/dagor/operator"
+    "github.com/akennis/dagor/config"
+    "github.com/akennis/dagor/operator"
 )
 
 type AddOp struct {
@@ -101,21 +103,21 @@ Prepare a JSON configuration to define the topology.
   "name": "math_demo", // graph name
   "vertices": { // all vertices
     "const10": { // vertex name
-      "op": "ConstOp", // operator class name
+      "op": "ConstIntOp", // operator class name
       "params": { // operator parameters
-        "in": 10
+        "Value": "10"
       },
       "outputs": {  // output data
-        "out": "n1"  // `out` is operator field name that defined in operator class, `n1` is vertex field name that used for graph dependencies
+        "Result": "n1"  // `Result` is the operator field name; `n1` is the wire name used for graph dependencies
       }
     },
     "const20": {
-      "op": "ConstOp",
+      "op": "ConstIntOp",
       "params": {
-        "in": 20
+        "Value": "20"
       },
       "outputs": {
-        "out": "n2"
+        "Result": "n2"
       }
     },
     "add": {
@@ -125,7 +127,7 @@ Prepare a JSON configuration to define the topology.
         "b": "n2"
       },
       "outputs": {
-        "result": "n3"
+        "sum": "n3"
       }
     },
     "log": {
@@ -160,7 +162,8 @@ import (
     "log"
     "fmt"
 
-    "github.com/wwz16/dagor"
+    "github.com/akennis/dagor"
+    "github.com/akennis/dagor/graph"
     "github.com/panjf2000/ants/v2"
 )
 
@@ -179,7 +182,7 @@ func main() {
       "name": "math_demo",
       ...
     }`
-    g, err := dagor.NewGraphFromJson(conf)
+    g, err := graph.NewGraphFromJson([]byte(conf))
     if err != nil {
         log.Printf("NewGraphFromJson error %v\n", err)
         return
@@ -224,7 +227,7 @@ A vertex can be made conditional by setting the `condition` field to the name of
 **1. Register a predicate** – predicates receive the current graph's output map and return a boolean.
 
 ```go
-import "github.com/wwz16/dagor/predicate"
+import "github.com/akennis/dagor/predicate"
 
 predicate.Register("positive", func(inputs map[string]any) bool {
     ptr, ok := inputs["source_out"].(*int)
@@ -307,7 +310,7 @@ source ──► det_branch  (condition=positive)     ──► coalesce (merge=
 Import the built-in operators package to make the coalesce operators available:
 
 ```go
-import _ "github.com/wwz16/dagor/operator/builtin"
+import _ "github.com/akennis/dagor/operator/builtin"
 ```
 
 **Built-in coalesce operators (2-input):**
@@ -341,6 +344,106 @@ import _ "github.com/wwz16/dagor/operator/builtin"
 ```
 
 `CoalesceOp` returns the first non-nil input in declaration order (`A` before `B`, `Input0` before `Input1`, …). It errors if every branch was skipped (all inputs are nil).
+
+---
+
+### Injecting Values into a Graph
+
+Dagor provides two complementary mechanisms for getting values into graph executions.
+
+#### Static values — `ConstXxxOp`
+
+`ConstIntOp`, `ConstFloat64Op`, `ConstStringOp`, and `ConstBoolOp` are no-input operators that emit a constant configured in params at graph-build time. Use them for values that do not change between executions: algorithm parameters, tuning thresholds, lookup keys.
+
+```json
+{
+  "threshold": {
+    "op": "ConstFloat64Op",
+    "params": { "Value": "0.75" },
+    "outputs": { "Result": "threshold_wire" }
+  }
+}
+```
+
+The value is string-encoded under the `"Value"` key. All four operators are available after:
+
+```go
+import _ "github.com/akennis/dagor/operator/builtin"
+```
+
+| Operator | Output type |
+|---|---|
+| `ConstStringOp` | `string` |
+| `ConstIntOp` | `int` |
+| `ConstFloat64Op` | `float64` |
+| `ConstBoolOp` | `bool` |
+
+#### Per-request values — `ContextValOp[T]`
+
+`ContextValOp[T]` is a no-input operator that reads its value from the `context.Context` passed to `eng.Run`. Because the value is resolved at execution time rather than build time, the same compiled `*graph.Graph` can serve many executions with different inputs — the right pattern for servers, pipelines, and anywhere the graph is built once and reused.
+
+**1. Register a factory at startup** — once per process, using an unexported struct type as the context key:
+
+```go
+import "github.com/akennis/dagor/operator/builtin"
+
+type userIDKey struct{}
+
+func init() {
+    operator.RegisterOpFactory("UserIDOp", builtin.ContextValFactory[string](userIDKey{}))
+}
+```
+
+**2. Reference the registered name in config:**
+
+```json
+{
+  "source": {
+    "op": "UserIDOp",
+    "outputs": { "Result": "user_id_wire" }
+  }
+}
+```
+
+**3. Inject the value before each run:**
+
+```go
+ctx = context.WithValue(ctx, userIDKey{}, req.UserID)
+eng.Run(ctx)
+```
+
+`Run` returns an error if the key is absent from the context or the value has the wrong type.
+
+#### Which to use
+
+| | `ConstXxxOp` | `ContextValOp[T]` |
+|---|---|---|
+| Value origin | params, at graph-build time | `context.Context`, at run time |
+| Changes per run? | No | Yes |
+| Encoded as | String (`"Value": "42"`) | Native Go type |
+| Good for | Config-driven knobs and thresholds | Request inputs, per-call payloads |
+
+---
+
+### Graph Reuse
+
+A `*graph.Graph` is immutable after it is built and safe to share across many executions. The `Engine`, however, holds one-shot execution state — pending counts, wire values, goroutine synchronisation — and cannot be `Run` twice.
+
+The correct pattern for reuse is to build the graph once and create a fresh `Engine` per call:
+
+```go
+g, _ := graph.NewGraphFromJson([]byte(conf)) // once, at startup
+
+// per request:
+eng, _ := dagor.NewEngine(g, pool)   // cheap: allocates execution state only
+ctx = context.WithValue(ctx, myKey{}, req.Input)
+eng.Run(ctx)
+eng.Close(ctx)
+```
+
+`NewEngine` is inexpensive — it allocates a small status struct and shares both the graph topology and the goroutine pool without copying.
+
+`ContextValOp` is the natural companion to this pattern: it binds graph inputs to the per-call context rather than to params baked at build time, so the same graph topology produces different results for each request.
 
 ---
 
@@ -396,10 +499,10 @@ func (op *DoubleOp) SetInputField(field string, value any) error {
   },
   "double_all": {
     "inputs":  { "Items": "raw_items" },
-    "outputs": { "Results": "doubled_items" },
     "map": {
       "item_input":    "item",
       "result_output": "result",
+      "results_wire":  "doubled_items",
       "subgraph": {
         "external_wires": ["item"],
         "vertices": {
@@ -421,6 +524,7 @@ func (op *DoubleOp) SetInputField(field string, value any) error {
 |---|---|
 | `map.item_input` | Wire name inside the sub-graph that receives each element (`*T`). |
 | `map.result_output` | Wire name inside the sub-graph whose value is collected per element. |
+| `map.results_wire` | Wire name in the parent graph where the assembled `[]any` results slice is written. |
 | `map.subgraph.external_wires` | Must list the item wire — tells the sub-graph it has no producer vertex for this wire. |
 
 #### Fluent Builder API
@@ -448,7 +552,7 @@ g, err := graph.NewBuilder("map_demo").
 
 ```go
 out, _ := eng.GetOutput("doubled_items")
-results := out.([]any)
+results := *out.(*[]any)
 for _, v := range results {
     fmt.Println(v.(int)) // type-assert to the concrete element type
 }
@@ -496,8 +600,8 @@ import (
     "log/slog"
     "os"
 
-    "github.com/wwz16/dagor"
-    "github.com/wwz16/dagor/reporter"
+    "github.com/akennis/dagor"
+    "github.com/akennis/dagor/reporter"
 )
 
 logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
@@ -612,33 +716,29 @@ As an alternative to JSON configuration, you can use the fluent builder API prov
 
 ```go
 import (
-    "github.com/wwz16/dagor/graph"
+    "github.com/akennis/dagor/graph"
 )
 
 func buildGraph() (*graph.Graph, error) {
     return graph.NewBuilder("math_demo").
         Vertex("const10").
-            Op("ConstOp").
-            Params(map[string]int{"in": 10}).
-            Output("out", "n1").
-        Done().
+            Op("ConstIntOp").
+            Params(map[string]any{"Value": "10"}).
+            Output("Result", "n1").
         Vertex("const20").
-            Op("ConstOp").
-            Params(map[string]int{"in": 20}).
-            Output("out", "n2").
-        Done().
+            Op("ConstIntOp").
+            Params(map[string]any{"Value": "20"}).
+            Output("Result", "n2").
         Vertex("add").
             Op("AddOp").
             Input("a", "n1").
             Input("b", "n2").
             Output("sum", "n3").
-        Done().
         Vertex("log").
             Op("LogOp").
-            Params(map[string]int{"base": 10}).
+            Params(map[string]any{"base": 10}).
             Input("x", "n3").
             Output("result", "answer").
-        Done().
         Build()
 }
 ```
@@ -666,3 +766,5 @@ python dagviz.py -i demo.json -o workflow.png
 ## 📄 License
 
 Distributed under the [MIT License](/LICENSE).
+
+This project is a fork of [wwz16/dagor](https://github.com/wwz16/dagor). The original work is Copyright (c) 2025 Will Zhang; modifications in this fork are Copyright (c) 2026 Albert Kennis. Both copyright notices are retained in the [LICENSE](/LICENSE) file as required by the MIT License.

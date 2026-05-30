@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/wwz16/dagor/config"
+	"github.com/akennis/dagor/config"
 )
 
 // mockOperator is a mock implementation of IOperator for testing

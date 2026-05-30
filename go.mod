@@ -1,4 +1,4 @@
-module github.com/wwz16/dagor
+module github.com/akennis/dagor
 
 go 1.23.5
 

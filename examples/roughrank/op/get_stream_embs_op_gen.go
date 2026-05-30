@@ -4,7 +4,7 @@ package op
 import (
 	"fmt"
 
-	"github.com/wwz16/dagor/examples/roughrank/model"
+	"github.com/akennis/dagor/examples/roughrank/model"
 )
 
 func (op *GetStreamEmbsOp) InputFields() map[string]any {

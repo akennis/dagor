@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wwz16/dagor/config"
+	"github.com/akennis/dagor/config"
 )
 
 func TestNewVertex_NilConfig(t *testing.T) {

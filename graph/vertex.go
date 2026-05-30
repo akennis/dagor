@@ -3,7 +3,7 @@ package graph
 import (
 	"fmt"
 
-	"github.com/wwz16/dagor/config"
+	"github.com/akennis/dagor/config"
 )
 
 // Vertex is a vertex in the graph.

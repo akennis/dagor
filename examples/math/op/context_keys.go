@@ -3,8 +3,8 @@ package op
 import (
 	"log"
 
-	"github.com/wwz16/dagor/operator"
-	"github.com/wwz16/dagor/operator/builtin"
+	"github.com/akennis/dagor/operator"
+	"github.com/akennis/dagor/operator/builtin"
 )
 
 type mathAKey struct{}

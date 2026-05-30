@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/wwz16/dagor"
+	"github.com/akennis/dagor"
 )
 
 // SlogReporter implements [dagor.Reporter] by emitting structured log events via [*slog.Logger].

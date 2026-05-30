@@ -4,8 +4,8 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/wwz16/dagor/graph"
-	"github.com/wwz16/dagor/operator"
+	"github.com/akennis/dagor/graph"
+	"github.com/akennis/dagor/operator"
 )
 
 type GraphState int32

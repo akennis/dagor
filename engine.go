@@ -10,12 +10,12 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/wwz16/dagor/config"
-	"github.com/wwz16/dagor/graph"
-	"github.com/wwz16/dagor/operator"
-	"github.com/wwz16/dagor/predicate"
-	"github.com/wwz16/dagor/reducer"
-	"github.com/wwz16/dagor/runtime"
+	"github.com/akennis/dagor/config"
+	"github.com/akennis/dagor/graph"
+	"github.com/akennis/dagor/operator"
+	"github.com/akennis/dagor/predicate"
+	"github.com/akennis/dagor/reducer"
+	"github.com/akennis/dagor/runtime"
 )
 
 // opPooler abstracts operator pool get/put so tests can inject a tracking

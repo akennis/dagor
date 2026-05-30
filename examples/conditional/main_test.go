@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/panjf2000/ants/v2"
-	"github.com/wwz16/dagor"
-	"github.com/wwz16/dagor/predicate"
+	"github.com/akennis/dagor"
+	"github.com/akennis/dagor/predicate"
 )
 
 // withPredicates registers the demo predicates for the duration of the test

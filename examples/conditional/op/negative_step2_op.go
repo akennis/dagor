@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/wwz16/dagor/config"
-	"github.com/wwz16/dagor/operator"
+	"github.com/akennis/dagor/config"
+	"github.com/akennis/dagor/operator"
 )
 
 // NegativeBranchStep2Op is the second step operator in the negative path used in the coalesce demo.

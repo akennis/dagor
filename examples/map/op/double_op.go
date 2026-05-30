@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/wwz16/dagor/config"
-	"github.com/wwz16/dagor/operator"
+	"github.com/akennis/dagor/config"
+	"github.com/akennis/dagor/operator"
 )
 
 // DoubleOp doubles a single integer element received via the "item" wire.

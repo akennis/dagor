@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"testing"
 
-	dagor "github.com/wwz16/dagor"
-	"github.com/wwz16/dagor/config"
-	"github.com/wwz16/dagor/graph"
-	"github.com/wwz16/dagor/operator"
+	dagor "github.com/akennis/dagor"
+	"github.com/akennis/dagor/config"
+	"github.com/akennis/dagor/graph"
+	"github.com/akennis/dagor/operator"
 )
 
 type cvTestIntKey struct{}

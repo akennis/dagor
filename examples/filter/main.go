@@ -5,12 +5,12 @@ import (
 	"log"
 	"time"
 
-	_ "github.com/wwz16/dagor/examples/filter/op"
+	_ "github.com/akennis/dagor/examples/filter/op"
 
 	"github.com/panjf2000/ants/v2"
-	"github.com/wwz16/dagor"
-	"github.com/wwz16/dagor/graph"
-	"github.com/wwz16/dagor/predicate"
+	"github.com/akennis/dagor"
+	"github.com/akennis/dagor/graph"
+	"github.com/akennis/dagor/predicate"
 )
 
 // registerPredicates installs the predicates used by the filter demos.
